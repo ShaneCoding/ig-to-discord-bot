@@ -45,7 +45,7 @@ jobs:
 
       - name: Commit last_seen changes
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PAT_GITHUB: ${{ secrets.PAT_GITHUB }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -54,5 +54,6 @@ jobs:
             echo "No changes to commit"
           else
             git commit -m "Update last_seen"
-            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} HEAD:${{ github.ref_name }}
+            # push using the PAT secret
+            git push https://x-access-token:${PAT_GITHUB}@github.com/${{ github.repository }} HEAD:${{ github.ref_name }}
           fi
