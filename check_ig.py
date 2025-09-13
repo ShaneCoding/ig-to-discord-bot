@@ -1,9 +1,9 @@
 # check_ig.py
 import os, json, time
-import base64
-import pathlib
 import instaloader
 import requests
+
+print("== Starting Instagram -> Discord check ==")
 
 # Config via env
 IG_MAP = os.environ.get("IG_MAP", "").strip()
@@ -46,11 +46,23 @@ if not entries:
     raise SystemExit(1)
 
 # Initialize Instaloader and load session
-L = instaloader.Instaloader(dirname_pattern=None, download_pictures=False, download_videos=False, download_comments=False)
+L = instaloader.Instaloader(
+    dirname_pattern=None,
+    download_pictures=False,
+    download_videos=False,
+    download_comments=False
+)
+
 if IG_LOGIN_USER and os.path.exists(SESSIONFILE):
     try:
         L.load_session_from_file(IG_LOGIN_USER, SESSIONFILE)
         print(f"Loaded session file {SESSIONFILE} for {IG_LOGIN_USER}")
+        # Debug test fetch
+        try:
+            own_profile = instaloader.Profile.from_username(L.context, IG_LOGIN_USER)
+            print(f"Session test OK: able to fetch own profile {own_profile.username}")
+        except Exception as e:
+            print("Session test failed:", e)
     except Exception as e:
         print("Failed to load session file:", e)
 else:
@@ -66,15 +78,12 @@ for username, webhook, extra in entries:
 
     try:
         posts = profile.get_posts()
-        latest = None
-        for p in posts:
-            latest = p
-            break
+        latest = next(posts, None)
         if latest is None:
             print(f"[{username}] no posts found.")
             continue
 
-        shortcode = latest.shortcode  # unique ID for the post
+        shortcode = latest.shortcode
         if last_seen.get(username) == shortcode:
             print(f"[{username}] no new posts (latest {shortcode})")
             continue
@@ -89,8 +98,7 @@ for username, webhook, extra in entries:
         if r.status_code in (200, 204):
             print(f"[{username}] Posted to Discord: {post_url}")
             last_seen[username] = shortcode
-            # Small delay to be polite
-            time.sleep(1)
+            time.sleep(1)  # Small delay
         else:
             print(f"[{username}] Discord webhook returned {r.status_code}: {r.text}")
 
@@ -100,4 +108,5 @@ for username, webhook, extra in entries:
 # Save updated last_seen
 with open(LAST_FILE, "w", encoding="utf-8") as f:
     json.dump(last_seen, f, indent=2)
-print("Done.")
+
+print("== Done ==")
