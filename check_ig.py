@@ -1,14 +1,27 @@
 # check_ig.py
-import os, json, time
+import os
+import json
+import time
+import traceback
 import instaloader
 import requests
+
+# Optional: load local .env file (ignored on GitHub)
+if os.path.exists(".env"):
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+        print("[debug] Loaded local .env file")
+    except ImportError:
+        print("[debug] python-dotenv not installed; skipping .env")
+
 
 print("== Starting Instagram -> Discord check ==")
 
 # Config via env
 IG_MAP = os.environ.get("IG_MAP", "").strip()
 SESSIONFILE = os.environ.get("IG_SESSIONFILE", "session-bloxtech8").strip()
-IG_LOGIN_USER = os.environ.get("IG_LOGIN_USER", "").strip()
+IG_LOGIN_USER = os.environ.get("IG_LOGIN_USER", "bloxtech8").strip()
 
 LAST_FILE = "last_seen.json"
 
@@ -41,39 +54,62 @@ else:
 
 # Parse targets
 entries = parse_map(IG_MAP)
+print("Parsed", len(entries), "entries from IG_MAP")
 if not entries:
     print("No entries found in IG_MAP. Exiting.")
     raise SystemExit(1)
 
-# Initialize Instaloader and load session
+# Initialize Instaloader
 L = instaloader.Instaloader(
     dirname_pattern=None,
     download_pictures=False,
     download_videos=False,
-    download_comments=False
+    download_comments=False,
 )
 
+# Load session file (robust)
+print("Looking for session file:", SESSIONFILE)
 if IG_LOGIN_USER and os.path.exists(SESSIONFILE):
     try:
         L.load_session_from_file(IG_LOGIN_USER, SESSIONFILE)
-        print(f"Loaded session file {SESSIONFILE} for {IG_LOGIN_USER}")
-        # Debug test fetch
+        print(f"[OK] Loaded session file {SESSIONFILE} for {IG_LOGIN_USER}")
+        # quick sanity check: fetch own profile
         try:
-            own_profile = instaloader.Profile.from_username(L.context, IG_LOGIN_USER)
-            print(f"Session test OK: able to fetch own profile {own_profile.username}")
+            me = instaloader.Profile.from_username(L.context, IG_LOGIN_USER)
+            print(f"[OK] Session test: fetched own profile {me.username}")
         except Exception as e:
-            print("Session test failed:", e)
+            print("[WARN] Session test: could not fetch own profile; result:", repr(e))
     except Exception as e:
-        print("Failed to load session file:", e)
+        print("[ERR] Failed to load session file:", repr(e))
+        traceback.print_exc()
+        print("Exiting due to session load failure.")
+        raise SystemExit(1)
 else:
-    print("Warning: no session file found or IG_LOGIN_USER not set — may be rate-limited or blocked.")
+    print("[WARN] IG_LOGIN_USER not set or session file missing. Exiting.")
+    raise SystemExit(1)
 
-# For each account, check latest post and post to webhook if new
+# Function to post to discord
+def post_to_discord(webhook_url, content):
+    try:
+        r = requests.post(webhook_url, json={"content": content}, timeout=15)
+        if r.status_code in (200, 204):
+            return True, None
+        else:
+            return False, f"{r.status_code} {r.text}"
+    except Exception as e:
+        return False, repr(e)
+
+# Main loop: check each account once
 for username, webhook, extra in entries:
+    print(f"[MAIN] Checking {username} ...")
+    # polite per-account delay (avoid rapid-fire)
+    time.sleep(4)
+
     try:
         profile = instaloader.Profile.from_username(L.context, username)
     except Exception as e:
-        print(f"[{username}] ERROR fetching profile: {e}")
+        print(f"[{username}] ERROR fetching profile: {repr(e)}")
+        traceback.print_exc()
         continue
 
     try:
@@ -89,21 +125,23 @@ for username, webhook, extra in entries:
             continue
 
         caption = latest.caption or ""
+        # Trim the caption to avoid giant messages; keep first 1000 chars
+        if len(caption) > 1000:
+            caption = caption[:1000] + "…"
+
         post_url = f"https://www.instagram.com/p/{shortcode}/"
         content = f"New post from @{username}:\n{caption}\n{post_url}"
 
-        # Send to Discord webhook
-        payload = {"content": content}
-        r = requests.post(webhook, json=payload, timeout=15)
-        if r.status_code in (200, 204):
+        ok, err = post_to_discord(webhook, content)
+        if ok:
             print(f"[{username}] Posted to Discord: {post_url}")
             last_seen[username] = shortcode
-            time.sleep(1)  # Small delay
         else:
-            print(f"[{username}] Discord webhook returned {r.status_code}: {r.text}")
+            print(f"[{username}] Failed to post to Discord: {err}")
 
     except Exception as e:
-        print(f"[{username}] ERROR during check/post: {e}")
+        print(f"[{username}] ERROR during check/post: {repr(e)}")
+        traceback.print_exc()
 
 # Save updated last_seen
 with open(LAST_FILE, "w", encoding="utf-8") as f:
