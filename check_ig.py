@@ -103,7 +103,7 @@ def post_to_discord(webhook_url, content):
 for username, webhook, extra in entries:
     print(f"[MAIN] Checking {username} ...")
     # polite per-account delay (avoid rapid-fire)
-    time.sleep(4)
+    time.sleep(10)
 
     try:
         profile = instaloader.Profile.from_username(L.context, username)
